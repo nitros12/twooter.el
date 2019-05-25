@@ -62,19 +62,19 @@
 
 (defun request-aio (url &rest args)
   "Send a request to URL with args ARGS wrapped in aio."
-  (lexical-let* ((p (aio-promise))
-                 (callback-success (cl-function
-                                    (lambda (&key data &allow-other-keys)
-                                      (lexical-let ((data- data))
-                                        (aio-resolve p (lambda () data-))))))
-                 (callback-error (cl-function
-                                  (lambda (&key error-thrown &allow-other-keys&rest _)
-                                    (lexical-let ((error-thrown- error-thrown))
-                                      (aio-resolve p (lambda () (twooter-bad-http error-thrown-))))))))
+  (let* ((p (aio-promise))
+         (callback-success (cl-function
+                            (lambda (&key data &allow-other-keys)
+                              (let ((data- data))
+                                (aio-resolve p (lambda () data-))))))
+         (callback-error (cl-function
+                          (lambda (&key error-thrown &allow-other-keys&rest _)
+                            (let ((error-thrown- error-thrown))
+                              (aio-resolve p (lambda () (signal 'twooter-bad-http error-thrown-))))))))
     (--> args
-         (plist-put it :success callback-success)
-         (plist-put it :error callback-error)
-         (setq args it))
+        (plist-put it :success callback-success)
+        (plist-put it :error callback-error)
+        (setq args it))
 
     (apply #'request url args)
     p))
@@ -145,7 +145,7 @@
   "Transform a base64 encoded image TEXT into an image."
   (pcase (s-match "data:image/\\w+;base64,\\(.+\\)" text)
     (`(,_ ,content)
-     (create-image (string-as-unibyte (base64-decode-string content)) nil t))))
+     (create-image (base64-decode-string content) nil t))))
 
 (defun transform-message-content (content)
   "Transform a message CONTENT string into a tui message."
@@ -158,7 +158,7 @@
             (text (alist-get 'text json-content)))
        `(twooter-image-message ,agent ,images ,text)))
 
-    (_ `(line ,(s-truncate 300 content)))))
+    (_ `(line ,(s-word-wrap 70 content)))))
 
 (component-define twooter-image-image (image)
   `((image ,image)
@@ -166,7 +166,7 @@
 
 (component-define twooter-image-message (agent images text)
   `(,@(-map (lambda (im) `(twooter-image-image ,im)) images)
-    ,@(when text `((line ,text)))
+    ,@(when text `((line ,(s-word-wrap 70 text))))
     ,@(when agent `((line (propertize (face magit-dimmed) ,(s-concat "Agent: " agent)))
                     (padding)))))
 
@@ -180,7 +180,8 @@
                '(padding)
                (cl-map 'list (lambda (msg)
                                `(twooter-message ,(alist-get 'name msg)
-                                                 ,(twooter-transform-message-content (alist-get 'message msg))))
+                                                 ,(twooter-transform-message-content
+                                                   (decode-coding-string (alist-get 'message msg) 'utf-8))))
                        (gethash 'messages state)))))
 
 (defun twooter-render (buf state)
